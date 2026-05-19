@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG – Retrieval-Augmented Generation erklärt</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f8f7f4; color: #1a1a2e; padding: 32px 20px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 6px; color: #1a1a2e; }
+  .subtitle { color: #666; font-size: 0.95rem; margin-bottom: 36px; }
+  .section { background: white; border-radius: 14px; padding: 28px; margin-bottom: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); }
+  .section h2 { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; color: #c8832a; }
+  .section .desc { font-size: 0.9rem; color: #555; margin-bottom: 20px; line-height: 1.6; }
+  .result-box { background: #f0f7ff; border-left: 4px solid #3b5bdb; border-radius: 6px; padding: 14px 18px; font-size: 0.9rem; margin-top: 14px; line-height: 1.7; }
+  .result-box strong { color: #3b5bdb; }
+  .warn-box { background: #fff8f0; border-left: 4px solid #c8832a; border-radius: 6px; padding: 14px 18px; font-size: 0.9rem; margin-top: 14px; line-height: 1.7; }
+  .warn-box strong { color: #c8832a; }
+  .green-box { background: #f0fdf4; border-left: 4px solid #2a7c5e; border-radius: 6px; padding: 14px 18px; font-size: 0.9rem; margin-top: 14px; line-height: 1.7; }
+  .green-box strong { color: #2a7c5e; }
+  .note { font-size: 0.8rem; color: #888; margin-top: 10px; font-style: italic; }
+  .canvas-label { font-size: 0.85rem; color: #555; font-weight: 600; margin-bottom: 8px; }
+  .canvas-hint { font-size: 0.78rem; color: #999; margin-top: 6px; }
+  .step { display: flex; gap: 12px; margin-bottom: 14px; align-items: flex-start; }
+  .step-num { background: #c8832a; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-size: 0.82rem; font-weight: 700; flex-shrink: 0; margin-top: 2px; }
+  .step-text { font-size: 0.88rem; line-height: 1.6; color: #333; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .card { background: #f8f7f4; border-radius: 10px; padding: 16px; font-size: 0.85rem; line-height: 1.6; }
+  .card h4 { font-size: 0.82rem; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+  btn-row { display:flex; gap:10px; margin-top:14px; }
+  button { background: #c8832a; color: white; border: none; padding: 10px 24px; border-radius: 8px; font-size: 0.88rem; font-weight: 600; cursor: pointer; font-family: 'Segoe UI', sans-serif; margin-top: 12px; margin-right: 8px; }
+  button.secondary { background: #eee; color: #333; }
+  @media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } body { padding: 16px 12px; } .section { padding: 18px; } }
+</style>
+</head>
+<body>
+
+<h1>RAG – Retrieval-Augmented Generation</h1>
+<p class="subtitle">Von BM25 über Vektor-RAG und Graph-RAG bis zum agentischen Prompt-Chaining</p>
+
+<!-- WHY RAG -->
+<div class="section">
+  <h2>① Das Problem: Warum reicht ein LLM allein nicht?</h2>
+  <p class="desc">Ein LLM hat alles, was es beim Training gesehen hat, in seinen Gewichten gespeichert – aber nicht dein Firmenwissen, aktuelle Gesetze oder 20 interne Dokumente. Und selbst wenn man alle 20 Dokumente in den Prompt lädt: das Kontextfenster hat Grenzen, und „Lost in the Middle" macht den Rest.</p>
+  <canvas id="problem_vis" width="820" height="110" style="width:100%; border-radius:10px;"></canvas>
+  <div class="warn-box">
+    <strong>Das Kernproblem:</strong> 20 PDFs × 50 Seiten = ~500.000 Token. GPT-4 Kontextfenster: ~128.000 Token. Passt nicht. Und selbst wenn es passt: zu teuer, zu langsam, und Lost-in-the-Middle lässt die Mitte vergessen.
+  </div>
+</div>
+
+<!-- BM25 -->
+<div class="section">
+  <h2>② BM25 – Die klassische Suche (Stichwortsuche)</h2>
+  <p class="desc">BM25 ist der Algorithmus hinter klassischen Suchmaschinen wie Elasticsearch. Er zählt, wie oft ein Suchwort in einem Dokument vorkommt – gewichtet nach Seltenheit des Wortes und Dokumentlänge. Keine Vektoren, keine KI.</p>
+
+  <canvas id="bm25_vis" width="820" height="180" style="width:100%; border-radius:10px;"></canvas>
+
+  <div class="grid2" style="margin-top:16px;">
+    <div class="card">
+      <h4 style="color:#4ecb8d;">✓ Stärken</h4>
+      Sehr schnell · kein GPU nötig · funktioniert perfekt bei exakten Begriffen (Paragraphen, Namen, Aktenzeichen) · erklärbar
+    </div>
+    <div class="card">
+      <h4 style="color:#e87070;">✗ Schwächen</h4>
+      Findet nur exakte Wörter – sucht man nach „Vertragspflicht" findet es nicht „§ 242 BGB Treu und Glauben" · keine Bedeutung, nur Zeichen
+    </div>
+  </div>
+</div>
+
+<!-- VECTOR RAG -->
+<div class="section">
+  <h2>③ Vektor-RAG – Bedeutungsbasierte Suche</h2>
+  <p class="desc">Statt Stichwörter zu zählen, werden Texte <strong>vektorisiert</strong> – genau wie Wörter im ersten Dokument. Ein Chunk mit ähnlicher Bedeutung wie die Frage liegt nah im Vektorraum, auch wenn kein einziges Wort übereinstimmt.</p>
+
+  <div class="canvas-label">Schritt 1: Text Chunking – Dokumente werden zerschnitten</div>
+  <canvas id="chunking_vis" width="820" height="130" style="width:100%; border-radius:10px;"></canvas>
+  <p class="canvas-hint">Warum chunken? Ein ganzes Dokument als ein Vektor verliert Details – ein Chunk von ~200–500 Wörtern behält seinen spezifischen Bedeutungsvektor.</p>
+
+  <div class="canvas-label" style="margin-top:20px;">Schritt 2: Chunks werden vektorisiert und in einer Vektordatenbank gespeichert</div>
+  <canvas id="vectordb_vis" width="820" height="200" style="width:100%; border-radius:10px;"></canvas>
+
+  <div class="canvas-label" style="margin-top:20px;">Schritt 3: Frage → Vektor → nächste Nachbarn finden</div>
+  <canvas id="retrieval_vis" width="820" height="220" style="width:100%; border-radius:10px;"></canvas>
+
+  <div class="result-box" style="margin-top:16px;">
+    <strong>Der Vorteil gegenüber BM25:</strong> Frage: „Was schuldet der Schuldner bei Verzug?" → findet auch Chunks die „§ 286 BGB", „Schadenersatz" und „Mahnung" enthalten, ohne dass das Wort „schuldet" drin steht – weil die Bedeutungsvektoren nah beieinander liegen.
+  </div>
+
+  <div class="grid2" style="margin-top:16px;">
+    <div class="card">
+      <h4 style="color:#4ecb8d;">✓ Stärken</h4>
+      Semantische Suche · findet relevante Inhalte trotz anderer Formulierung · skaliert auf Millionen Chunks
+    </div>
+    <div class="card">
+      <h4 style="color:#e87070;">✗ Schwächen</h4>
+      Übersieht exakte Treffer wenn Vektoren überraschend weit auseinanderliegen · braucht Embedding-Modell · Chunking-Strategie entscheidend
+    </div>
+  </div>
+</div>
+
+<!-- GRAPH RAG -->
+<div class="section">
+  <h2>④ Graph-RAG – Beziehungen zwischen Konzepten</h2>
+  <p class="desc">Vektor-RAG findet ähnliche Chunks – aber es sieht nicht, dass „§ 242 BGB" mit „§ 280 BGB" verknüpft ist, weil das eine die Grundlage des anderen ist. Graph-RAG speichert zusätzlich <strong>Beziehungen</strong> zwischen Entitäten als Graph.</p>
+
+  <canvas id="graphrag_vis" width="820" height="280" style="width:100%; border-radius:10px; cursor:default;"></canvas>
+
+  <div class="grid2" style="margin-top:16px;">
+    <div class="card">
+      <h4 style="color:#4ecb8d;">✓ Stärken</h4>
+      Versteht Abhängigkeiten · kann entlang von Beziehungen navigieren · ideal für rechtliche Normen-Ketten oder Wissensgraphen
+    </div>
+    <div class="card">
+      <h4 style="color:#e87070;">✗ Schwächen</h4>
+      Aufwändig zu bauen · Graph muss gepflegt werden · bei unstrukturierten Texten schwer automatisch zu extrahieren
+    </div>
+  </div>
+
+  <div class="result-box" style="margin-top:16px;">
+    <strong>In der Praxis:</strong> Microsoft hat Graph-RAG 2024 open-source veröffentlicht. Es kombiniert Vektor-Suche mit einem automatisch extrahierten Wissensgraphen aus den Dokumenten.
+  </div>
+</div>
+
+<!-- AGENTIC RAG / PROMPT CHAINING -->
+<div class="section">
+  <h2>⑤ Agentisches RAG – Das LLM überlegt selbst, was es braucht</h2>
+  <p class="desc">Der entscheidende Schritt: Statt dem LLM einfach Chunks zuzuwerfen, <strong>fragt das LLM sich selbst</strong>, welche Teilfragen es zur Beantwortung stellen muss – und holt sich dann gezielt die passenden Chunks.</p>
+
+  <div class="canvas-label">Die Prompt-Chain visualisiert:</div>
+  <canvas id="agentic_vis" width="820" height="340" style="width:100%; border-radius:10px; cursor:pointer;"></canvas>
+
+  <div style="text-align:center; margin-top:12px;">
+    <button onclick="stepAgentic()">▶ Nächster Schritt in der Chain</button>
+    <button class="secondary" onclick="resetAgentic()">↺ Reset</button>
+  </div>
+
+  <div class="green-box" style="margin-top:16px;">
+    <strong>Was hier passiert – Schritt für Schritt:</strong><br><br>
+    <strong>1. Nutzerfrage eingeht:</strong> „Welche Schadensersatzansprüche hat mein Mandant?"<br><br>
+    <strong>2. LLM (als Planer) überlegt:</strong> „Um das zu beantworten, brauche ich: (a) Welche Pflichtverletzung liegt vor? (b) Welche §§ greifen? (c) Was sagen die relevanten Vertragsklauseln?"<br><br>
+    <strong>3. Für jede Teilfrage:</strong> Vektor-Suche in der Dokumentendatenbank → passende Chunks werden geholt<br><br>
+    <strong>4. LLM (als Beantworter):</strong> Erhält nur die ~5 relevantesten Chunks statt alle 20 Dokumente → antwortet präzise<br><br>
+    <strong>Ergebnis:</strong> Statt 500.000 Token im Kontext → ~3.000 Token gezielt ausgewählter Inhalt.
+  </div>
+</div>
+
+<!-- COMPARISON -->
+<div class="section">
+  <h2>⑥ Vergleich: Alle Methoden auf einen Blick</h2>
+  <canvas id="comparison_vis" width="820" height="200" style="width:100%; border-radius:10px;"></canvas>
+  <p class="note">* Hybrides RAG (BM25 + Vektor) ist in der Praxis oft am besten – exakte Treffer + semantische Suche kombiniert</p>
+</div>
+
+<p style="text-align:center; color:#bbb; font-size:0.78rem; margin-top:8px; margin-bottom:32px;">Vereinfachte Darstellung zu Illustrationszwecken · Quellen: Lewis et al. 2020 (RAG), Robertson & Zaragoza 2009 (BM25), Edge et al. 2024 (Graph-RAG)</p>
+
+<script>
+function getCtx(id) {
+  const c = document.getElementById(id);
+  const ctx = c.getContext('2d');
+  ctx.W = c.width; ctx.H = c.height;
+  return ctx;
+}
+
+// ── ① Problem vis ──────────────────────────────────────────────────
+(function(){
+  const ctx = getCtx('problem_vis');
+  const W=ctx.W, H=ctx.H;
+  ctx.fillStyle='#0f1117'; ctx.fillRect(0,0,W,H);
+
+  // Documents
+  const docs = Array.from({length:20},(_,i)=>i);
+  const docW=26, docH=44, startX=12, y=28;
+  docs.forEach((d,i)=>{
+    const x=startX+i*(docW+4);
+    ctx.fillStyle='#7b9fff22'; ctx.strokeStyle='#7b9fff55'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.roundRect(x,y,docW,docH,3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#7b9fff'; ctx.font='8px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText('PDF',x+docW/2,y+16);
+    ctx.fillText((i+1),x+docW/2,y+28);
+  });
+
+  // Arrow
+  const ax=startX+20*(docW+4)+10;
+  ctx.strokeStyle='#555'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(ax,y+docH/2); ctx.lineTo(ax+30,y+docH/2); ctx.stroke();
+  ctx.fillStyle='#555'; ctx.beginPath(); ctx.moveTo(ax+30,y+docH/2-5); ctx.lineTo(ax+38,y+docH/2); ctx.lineTo(ax+30,y+docH/2+5); ctx.fill();
+
+  // LLM box
+  const lx=ax+42, lw=90, lh=50;
+  ctx.fillStyle='#1a1a2e'; ctx.strokeStyle='#c8832a'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.roundRect(lx,y-3,lw,lh,8); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#c8832a'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText('LLM',lx+lw/2,y+18);
+  ctx.fillStyle='#e87070'; ctx.font='10px Segoe UI';
+  ctx.fillText('⚠ 500k Token!',lx+lw/2,y+34);
+
+  // X mark
+  const xx=lx+lw+10;
+  ctx.strokeStyle='#e87070'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(xx,y); ctx.lineTo(xx+20,y+44); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(xx+20,y); ctx.lineTo(xx,y+44); ctx.stroke();
+
+  // Label
+  ctx.fillStyle='#888'; ctx.font='10px Segoe UI'; ctx.textAlign='left';
+  ctx.fillText('20 Dokumente × 50 Seiten → passt nicht ins Kontextfenster', lx+lw+36, y+26);
+  ctx.textAlign='left';
+})();
+
+// ── ② BM25 ─────────────────────────────────────────────────────────
+(function(){
+  const ctx = getCtx('bm25_vis');
+  const W=ctx.W, H=ctx.H;
+  ctx.fillStyle='#0f1117'; ctx.fillRect(0,0,W,H);
+
+  const query = 'Schadensersatz Verzug';
+  const docs = [
+    {title:'Vertrag_2023.pdf', text:'Der Schuldner haftet bei Verzug für Schadensersatz nach § 286...', score:0.92, hits:['Schadensersatz','Verzug']},
+    {title:'AGB_Muster.pdf',   text:'Im Falle von Verzögerungen gilt die gesetzliche Regelung...', score:0.41, hits:['Verzug']},
+    {title:'Brief_Jan.pdf',    text:'Sehr geehrte Damen und Herren, wir bestätigen den Eingang...', score:0.04, hits:[]},
+  ];
+
+  // Query box
+  ctx.fillStyle='#c8832a22'; ctx.strokeStyle='#c8832a'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.roundRect(10,12,180,30,6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#c8832a'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='left';
+  ctx.fillText('🔍 Suche: „'+query+'"', 18,32);
+
+  // Arrow
+  ctx.strokeStyle='#555'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(194,27); ctx.lineTo(230,27); ctx.stroke();
+  ctx.fillStyle='#555'; ctx.beginPath(); ctx.moveTo(228,22); ctx.lineTo(236,27); ctx.lineTo(228,32); ctx.fill();
+  ctx.fillStyle='#666'; ctx.font='9px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText('BM25', 213, 20);
+
+  // Documents
+  docs.forEach((d,i)=>{
+    const y=8+i*54, x=242;
+    ctx.fillStyle='#ffffff08'; ctx.strokeStyle=d.score>0.5?'#4ecb8d':'#444'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.roundRect(x,y,W-x-10,44,6); ctx.fill(); ctx.stroke();
+    // Title
+    ctx.fillStyle='#aaa'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='left';
+    ctx.fillText(d.title,x+8,y+14);
+    // Text preview with highlights
+    let tx=x+8, ty=y+30;
+    ctx.font='10px Segoe UI';
+    d.text.split(' ').forEach(word=>{
+      const hit=d.hits.find(h=>word.includes(h));
+      ctx.fillStyle= hit?'#ffe066':'#666';
+      if(hit){ctx.font='bold 10px Segoe UI';} else {ctx.font='10px Segoe UI';}
+      ctx.fillText(word,tx,ty); tx+=ctx.measureText(word).width+4;
+      if(tx>W-80){return;}
+    });
+    // Score bar
+    const bx=W-85, bw=70*d.score;
+    ctx.fillStyle='#333'; ctx.beginPath(); ctx.roundRect(bx,y+8,70,14,3); ctx.fill();
+    ctx.fillStyle=d.score>0.5?'#4ecb8d':'#555';
+    ctx.beginPath(); ctx.roundRect(bx,y+8,bw,14,3); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText('Score: '+d.score.toFixed(2),bx+35,y+19);
+  });
+  ctx.textAlign='left';
+})();
+
+// ── ③a Chunking ─────────────────────────────────────────────────────
+(function(){
+  const ctx = getCtx('chunking_vis');
+  const W=ctx.W, H=ctx.H;
+  ctx.fillStyle='#0f1117'; ctx.fillRect(0,0,W,H);
+
+  // Full doc
+  const docW=120, docH=90;
+  ctx.fillStyle='#7b9fff22'; ctx.strokeStyle='#7b9fff'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.roundRect(10,18,docW,docH,6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#7b9fff'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText('Dokument',10+docW/2,38);
+  ctx.fillStyle='#555'; ctx.font='9px Segoe UI';
+  ctx.fillText('§ 1 Allgemeines...',10+docW/2,54);
+  ctx.fillText('§ 2 Pflichten...',10+docW/2,66);
+  ctx.fillText('§ 3 Haftung...',10+docW/2,78);
+  ctx.fillText('§ 4 Kündigung...',10+docW/2,90);
+  ctx.fillText('§ 5 Sonstiges...',10+docW/2,102);
+
+  // Arrow
+  ctx.strokeStyle='#c8832a'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(134,63); ctx.lineTo(168,63); ctx.stroke();
+  ctx.fillStyle='#c8832a'; ctx.beginPath(); ctx.moveTo(166,58); ctx.lineTo(174,63); ctx.lineTo(166,68); ctx.fill();
+  ctx.fillStyle='#c8832a'; ctx.font='bold 9px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText('Chunking',151,55);
+  ctx.fillText('~300 Wörter',151,90);
+
+  // Chunks
+  const chunks=[
+    {t:'Chunk 1\n§ 1–2', c:'#e8a44a'},
+    {t:'Chunk 2\n§ 3', c:'#4ecb8d'},
+    {t:'Chunk 3\n§ 4', c:'#7b9fff'},
+    {t:'Chunk 4\n§ 5', c:'#bf8fff'},
+  ];
+  chunks.forEach((ch,i)=>{
+    const x=180+i*150, y=22, cw=130, ch2=82;
+    ctx.fillStyle=ch.c+'22'; ctx.strokeStyle=ch.c; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.roundRect(x,y,cw,ch2,6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle=ch.c; ctx.font='bold 10px Segoe UI'; ctx.textAlign='center';
+    const lines=ch.t.split('\n');
+    lines.forEach((l,li)=>ctx.fillText(l,x+cw/2,y+30+li*16));
+    // Vector representation hint
+    ctx.fillStyle='#555'; ctx.font='9px Segoe UI';
+    ctx.fillText('→ (0.72, 0.45, …)',x+cw/2,y+66);
+  });
+  ctx.textAlign='left';
+})();
+
+// ── ③b Vector DB ────────────────────────────────────────────────────
+(function(){
+  const ctx = getCtx('vectordb_vis');
+  const W=ctx.W, H=ctx.H;
+  ctx.fillStyle='#0f1117'; ctx.fillRect(0,0,W,H);
+
+  // Scatter of chunk vectors
+  const chunks=[
+    {l:'Chunk: § 286 Verzug',    x:0.75,y:0.80,c:'#4ecb8d',dim:'Schaden'},
+    {l:'Chunk: § 280 Schadensers.',x:0.80,y:0.72,c:'#4ecb8d',dim:'Schaden'},
+    {l:'Chunk: § 242 Treu+Glauben',x:0.70,y:0.65,c:'#4ecb8d',dim:'Schaden'},
+    {l:'Chunk: Kündigungsfristen', x:0.20,y:0.75,c:'#7b9fff',dim:'Kündigung'},
+    {l:'Chunk: Vertragsschluss',   x:0.15,y:0.65,c:'#7b9fff',dim:'Kündigung'},
+    {l:'Chunk: AGB Klauseln',      x:0.25,y:0.55,c:'#e8a44a',dim:'AGB'},
+    {l:'Chunk: Datenschutz',       x:0.50,y:0.30,c:'#bf8fff',dim:'DSGVO'},
+    {l:'Chunk: DSGVO Art. 6',      x:0.45,y:0.22,c:'#bf8fff',dim:'DSGVO'},
+  ];
+
+  // Cluster halos
+  const cls=[
+    {cx:0.75,cy:0.72,rx:0.10,ry:0.10,c:'#4ecb8d',l:'Schadensrecht'},
+    {cx:0.20,cy:0.70,rx:0.10,ry:0.10,c:'#7b9fff',l:'Vertragsrecht'},
+    {cx:0.48,cy:0.26,rx:0.08,ry:0.08,c:'#bf8fff',l:'Datenschutz'},
+  ];
+  cls.forEach(cl=>{
+    const cx=30+cl.cx*(W-60), cy=20+cl.cy*(H-40);
+    ctx.save(); ctx.globalAlpha=0.07; ctx.fillStyle=cl.c;
+    ctx.beginPath(); ctx.ellipse(cx,cy,cl.rx*(W-60),cl.ry*(H-40),0,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=0.25; ctx.strokeStyle=cl.c; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+    ctx.beginPath(); ctx.ellipse(cx,cy,cl.rx*(W-60),cl.ry*(H-40),0,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha=0.8; ctx.fillStyle=cl.c;
+    ctx.font='bold 10px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText(cl.l,cx,cy-cl.ry*(H-40)-6);
+    ctx.restore();
+  });
+
+  // Axes
+  ctx.globalAlpha=0.15; ctx.strokeStyle='#aaa'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(20,H-12); ctx.lineTo(W-10,H-12); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(20,H-12); ctx.lineTo(20,8); ctx.stroke();
+  ctx.globalAlpha=0.5; ctx.fillStyle='#666'; ctx.font='10px Segoe UI'; ctx.textAlign='left';
+  ctx.fillText('Embedding-Dim 1 →',W-130,H-2);
+  ctx.save(); ctx.translate(10,100); ctx.rotate(-Math.PI/2);
+  ctx.textAlign='center'; ctx.fillText('Embedding-Dim 2',0,0); ctx.restore();
+  ctx.globalAlpha=1;
+
+  chunks.forEach(ch=>{
+    const x=30+ch.x*(W-60), y=20+((1-ch.y))*(H-40);
+    ctx.fillStyle=ch.c; ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ccc'; ctx.font='10px Segoe UI'; ctx.textAlign='left';
+    ctx.fillText(ch.l,x+9,y+4);
+  });
+  ctx.textAlign='left';
+
+  // Label
+  ctx.fillStyle='#666'; ctx.font='10px Segoe UI';
+  ctx.fillText('Vektordatenbank: jeder Chunk als Punkt im semantischen Raum gespeichert',12,H-4);
+})();
+
+// ── ③c Retrieval ────────────────────────────────────────────────────
+(function(){
+  const ctx = getCtx('retrieval_vis');
+  const W=ctx.W, H=ctx.H;
+  ctx.fillStyle='#0f1117'; ctx.fillRect(0,0,W,H);
+
+  const qx=0.78, qy=0.25;
+  const chunks=[
+    {l:'§ 286 Verzug',     x:0.72,y:0.72,c:'#4ecb8d',near:true,rank:1},
+    {l:'§ 280 Schadensers.',x:0.80,y:0.65,c:'#4ecb8d',near:true,rank:2},
+    {l:'§ 242 T+G',         x:0.68,y:0.58,c:'#4ecb8d',near:true,rank:3},
+    {l:'Kündigungsfristen', x:0.20,y:0.72,c:'#7b9fff',near:false,rank:null},
+    {l:'Vertragsschluss',   x:0.15,y:0.62,c:'#7b9fff',near:false,rank:null},
+    {l:'DSGVO Art. 6',      x:0.45,y:0.22,c:'#bf8fff',near:false,rank:null},
+  ];
+
+  const px=p=>30+p*(W-60);
+  const py=p=>20+((1-p))*(H-50);
+
+  // Distance lines to near chunks
+  chunks.filter(c=>c.near).forEach(c=>{
+    ctx.globalAlpha=0.4; ctx.strokeStyle='#ffe066'; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+    ctx.beginPath(); ctx.moveTo(px(qx),py(qy)); ctx.lineTo(px(c.x),py(c.y)); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha=1;
+  });
+
+  // Query point
+  const qpx=px(qx), qpy=py(qy);
+  ctx.shadowColor='#ffe066'; ctx.shadowBlur=16;
+  ctx.fillStyle='#ffe066';
+  ctx.beginPath(); ctx.arc(qpx,qpy,10,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#1a1a2e'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText('Q',qpx,qpy+4);
+  ctx.fillStyle='#ffe066'; ctx.font='bold 11px Segoe UI';
+  ctx.fillText('Frage-Vektor',qpx+14,qpy-12);
+
+  // Search radius circle
+  ctx.globalAlpha=0.08; ctx.fillStyle='#ffe066';
+  ctx.beginPath(); ctx.arc(qpx,qpy,140,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=0.25; ctx.strokeStyle='#ffe066'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
+  ctx.beginPath(); ctx.arc(qpx,qpy,140,0,Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha=1;
+  ctx.fillStyle='#ffe06666'; ctx.font='9px Segoe UI'; ctx.textAlign='left';
+  ctx.fillText('Suchradius (Top-3)',qpx+100,qpy-80);
+
+  // Chunks
+  chunks.forEach(c=>{
+    const x=px(c.x), y=py(c.y);
+    const r=c.near?8:5;
+    ctx.globalAlpha=c.near?1:0.4;
+    ctx.fillStyle=c.near?'#ffe066':c.c;
+    if(c.near){ctx.strokeStyle='#4ecb8d';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,r+3,0,Math.PI*2);ctx.stroke();}
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=c.near?'#fff':'#777'; ctx.font=c.near?'bold 10px Segoe UI':'10px Segoe UI'; ctx.textAlign='left';
+    ctx.fillText(c.l+(c.rank?` #${c.rank}`:''),x+10,y+4);
+    ctx.globalAlpha=1;
+  });
+
+  // Legend
+  ctx.fillStyle='#888'; ctx.font='10px Segoe UI'; ctx.textAlign='left';
+  ctx.fillText('⭐ Top-3 Chunks werden dem LLM übergeben',12,H-8);
+  ctx.textAlign='left';
+})();
+
+// ── ④ Graph RAG ─────────────────────────────────────────────────────
+(function(){
+  const ctx = getCtx('graphrag_vis');
+  const W=ctx.W, H=ctx.H;
+  ctx.fillStyle='#0f1117'; ctx.fillRect(0,0,W,H);
+
+  const nodes=[
+    {id:'§242',  x:0.50,y:0.18,c:'#e8a44a',l:'§ 242 BGB\nTreu+Glauben',r:32},
+    {id:'§280',  x:0.25,y:0.45,c:'#4ecb8d',l:'§ 280 BGB\nSchadensersatz',r:30},
+    {id:'§286',  x:0.50,y:0.55,c:'#4ecb8d',l:'§ 286 BGB\nVerzug',r:28},
+    {id:'§249',  x:0.75,y:0.45,c:'#4ecb8d',l:'§ 249 BGB\nNaturalrest.',r:28},
+    {id:'§314',  x:0.20,y:0.78,c:'#7b9fff',l:'§ 314 BGB\nKündigung',r:26},
+    {id:'BGH1',  x:0.70,y:0.78,c:'#bf8fff',l:'BGH\nUrt. 2021',r:24},
+    {id:'BGH2',  x:0.40,y:0.82,c:'#bf8fff',l:'BGH\nUrt. 2019',r:22},
+  ];
+
+  const edges=[
+    {from:'§242',to:'§280',l:'Grundlage für',c:'#e8a44a'},
+    {from:'§280',to:'§286',l:'spezifiziert',c:'#4ecb8d'},
+    {from:'§280',to:'§249',l:'Rechtsfolge →',c:'#4ecb8d'},
+    {from:'§242',to:'§314',l:'ermöglicht',c:'#e8a44a'},
+    {from:'§286',to:'BGH1',l:'zitiert in',c:'#bf8fff'},
+    {from:'§280',to:'BGH2',l:'zitiert in',c:'#bf8fff'},
+    {from:'§249',to:'BGH1',l:'Maßstab in',c:'#bf8fff'},
+  ];
+
+  const px=n=>30+n.x*(W-60);
+  const py=n=>20+n.y*(H-40);
+
+  // Edges
+  edges.forEach(e=>{
+    const fn=nodes.find(n=>n.id===e.from), tn=nodes.find(n=>n.id===e.to);
+    const x1=px(fn),y1=py(fn),x2=px(tn),y2=py(tn);
+    ctx.strokeStyle=e.c+'88'; ctx.lineWidth=2; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    // Arrowhead
+    const angle=Math.atan2(y2-y1,x2-x1);
+    const ax=x2-tn.r*Math.cos(angle), ay=y2-tn.r*Math.sin(angle);
+    ctx.fillStyle=e.c+'88';
+    ctx.beginPath();
+    ctx.moveTo(ax,ay);
+    ctx.lineTo(ax-10*Math.cos(angle-0.4),ay-10*Math.sin(angle-0.4));
+    ctx.lineTo(ax-10*Math.cos(angle+0.4),ay-10*Math.sin(angle+0.4));
+    ctx.closePath(); ctx.fill();
+    // Edge label
+    ctx.fillStyle=e.c+'bb'; ctx.font='9px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText(e.l,(x1+x2)/2+8,(y1+y2)/2-4);
+  });
+
+  // Nodes
+  nodes.forEach(n=>{
+    const x=px(n),y=py(n);
+    ctx.fillStyle=n.c+'33'; ctx.strokeStyle=n.c; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.arc(x,y,n.r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.font='bold 9px Segoe UI'; ctx.textAlign='center';
+    const ls=n.l.split('\n');
+    ls.forEach((l,i)=>ctx.fillText(l,x,y-3+i*12));
+  });
+
+  // Query path highlight
+  ctx.globalAlpha=0.25; ctx.fillStyle='#ffe066';
+  ['§242','§280','§286'].forEach(id=>{
+    const n=nodes.find(n=>n.id===id);
+    ctx.beginPath(); ctx.arc(px(n),py(n),n.r+6,0,Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#ffe066'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='left';
+  ctx.fillText('← Graph-Pfad für Frage: „Welche Normen bei Verzug?"',px(nodes[0])+38,py(nodes[0])+4);
+  ctx.textAlign='left';
+})();
+
+// ── ⑤ Agentic RAG ──────────────────────────────────────────────────
+let agentStep = 0;
+const agentSteps = [
+  { label:'Nutzerfrage', desc:'"Welche Schadensersatzansprüche hat mein Mandant aus dem Vertrag?"', color:'#c8832a', icon:'👤' },
+  { label:'LLM als Planer', desc:'„Ich brauche: (a) Welche Pflichtverletzung? (b) Welche §§ greifen? (c) Was sagen die Vertragsklauseln?"', color:'#7b9fff', icon:'🧠' },
+  { label:'Teilfrage A → Suche', desc:'Query: „Pflichtverletzung Lieferverzug" → Chunk §286 BGB + Chunk §280 BGB gefunden', color:'#4ecb8d', icon:'🔍' },
+  { label:'Teilfrage B → Suche', desc:'Query: „Schadensersatz Verzug Paragraphen" → Chunk §249 BGB + BGH Urt. 2021 gefunden', color:'#4ecb8d', icon:'🔍' },
+  { label:'Teilfrage C → Suche', desc:'Query: „Vertragsklausel Haftungsausschluss" → Chunk §4 Abs.2 Vertrag + Chunk §3 Vertrag gefunden', color:'#4ecb8d', icon:'🔍' },
+  { label:'LLM als Beantworter', desc:'Erhält: Ursprungsfrage + 6 gezielte Chunks (~3.000 Token) statt 20 Dokumente (~500.000 Token)', color:'#e8a44a', icon:'⚡' },
+  { label:'Antwort', desc:'Strukturierte juristische Antwort mit §-Verweisen, präzise und halluzinationsarm', color:'#2a7c5e', icon:'✅' },
+];
+
+function drawAgentic() {
+  const ctx = getCtx('agentic_vis');
+  const W=ctx.W, H=ctx.H;
+  ctx.fillStyle='#0f1117'; ctx.fillRect(0,0,W,H);
+
+  const n=agentSteps.length;
+  const nodeH=36, gap=10, totalH=n*(nodeH+gap)-gap;
+  const startY=(H-totalH)/2;
+
+  agentSteps.forEach((s,i)=>{
+    const y=startY+i*(nodeH+gap);
+    const active=i<=agentStep;
+    const current=i===agentStep;
+
+    // Connector line
+    if(i<n-1){
+      const ly=y+nodeH, lx=W/2;
+      ctx.globalAlpha=i<agentStep?0.6:0.15;
+      ctx.strokeStyle=agentSteps[i].color;
+      ctx.lineWidth=2; ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(lx,ly+gap); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+      // Arrow
+      if(i<agentStep){
+        ctx.fillStyle=agentSteps[i].color;
+        ctx.beginPath(); ctx.moveTo(lx-4,ly+gap-2); ctx.lineTo(lx,ly+gap+4); ctx.lineTo(lx+4,ly+gap-2); ctx.fill();
+      }
+    }
+
+    ctx.globalAlpha=active?1:0.2;
+
+    // Box
+    const bx=20, bw=W-40;
+    if(current){ctx.shadowColor=s.color; ctx.shadowBlur=12;}
+    ctx.fillStyle=s.color+(active?'22':'11');
+    ctx.strokeStyle=s.color; ctx.lineWidth=current?2.5:1.5;
+    ctx.beginPath(); ctx.roundRect(bx,y,bw,nodeH,8); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur=0;
+
+    // Icon + label
+    ctx.fillStyle=active?s.color:'#666'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='left';
+    ctx.fillText(s.icon+' '+s.label, bx+12, y+14);
+    // Description
+    ctx.fillStyle=active?'#ccc':'#444'; ctx.font='10px Segoe UI';
+    ctx.fillText(s.desc, bx+12, y+28);
+
+    ctx.globalAlpha=1;
+  });
+  ctx.textAlign='left';
+
+  // Token savings box at bottom
+  if(agentStep>=5){
+    ctx.fillStyle='#2a7c5e22'; ctx.strokeStyle='#2a7c5e'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.roundRect(W-220,H-36,210,28,6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#2a7c5e'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText('💾 ~3.000 statt 500.000 Token – 99% sparsamer',W-115,H-18);
+    ctx.textAlign='left';
+  }
+}
+
+function stepAgentic(){
+  if(agentStep<agentSteps.length-1){ agentStep++; drawAgentic(); }
+}
+function resetAgentic(){ agentStep=0; drawAgentic(); }
+drawAgentic();
+
+// ── ⑥ Comparison ───────────────────────────────────────────────────
+(function(){
+  const ctx = getCtx('comparison_vis');
+  const W=ctx.W, H=ctx.H;
+  ctx.fillStyle='#f8f7f4'; ctx.fillRect(0,0,W,H);
+
+  const methods=[
+    {name:'BM25',         semantic:1,exact:5,relations:1,cost:5,complex:1,color:'#e8a44a'},
+    {name:'Vektor-RAG',   semantic:5,exact:3,relations:2,cost:3,complex:3,color:'#7b9fff'},
+    {name:'Hybrid-RAG*',  semantic:5,exact:5,relations:2,cost:3,complex:4,color:'#4ecb8d'},
+    {name:'Graph-RAG',    semantic:4,exact:3,relations:5,cost:2,complex:5,color:'#bf8fff'},
+    {name:'Agentisch',    semantic:5,exact:4,relations:4,cost:2,complex:5,color:'#c8832a'},
+  ];
+  const dims=['Semantik','Exakte\nTreffer','Bezieh-\nungen','Effizienz','Einfach-\nheit'];
+  const colW=(W-120)/methods.length;
+  const rowH=(H-40)/dims.length;
+
+  // Header
+  ctx.fillStyle='#1a1a2e'; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center';
+  methods.forEach((m,i)=>{
+    ctx.fillStyle=m.color;
+    ctx.fillText(m.name, 120+i*colW+colW/2, 22);
+  });
+
+  // Rows
+  dims.forEach((d,j)=>{
+    const y=36+j*rowH;
+    ctx.fillStyle='#333'; ctx.font='10px Segoe UI'; ctx.textAlign='right';
+    d.split('\n').forEach((l,li)=>ctx.fillText(l,112,y+10+li*11));
+    methods.forEach((m,i)=>{
+      const val=[m.semantic,m.exact,m.relations,m.cost,m.complex][j];
+      const x=120+i*colW+colW/2;
+      // Dots
+      for(let k=1;k<=5;k++){
+        ctx.fillStyle=k<=val?m.color+'cc':'#ddd';
+        ctx.beginPath(); ctx.arc(x-20+k*8,y+12,4,0,Math.PI*2); ctx.fill();
+      }
+    });
+  });
+  ctx.textAlign='left';
+})();
+</script>
+</body>
+</html>
